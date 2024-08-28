@@ -1,0 +1,90 @@
+# Accept the VMware End User License Agreement
+vmaccepteula
+
+# Set the root password for DCUI
+rootpw {{ hostvars[groups['esxi'][my_idx]].ansible_password }}
+
+# Install on the first local disk available on machine
+#install --firstdisk --overwritevmfs --overwritevsan
+install --firstdisk --overwritevmfs
+
+# Set the network to Static on the first network adapter
+#network --hostname={{ host_fact_ip }} --device=vmnic0 --bootproto=static --ip={{ host_fact_ip }} --netmask={{ hostvars[groups['esxi'][my_idx]].host_fact_netmask }} --gateway={{ hostvars[groups['esxi'][my_idx]].host_fact_gateway }} --nameserver={{ hostvars[groups['esxi'][my_idx]].host_fact_nameserver }}
+network --hostname={{ host_fact_hostname }} --device=vmnic0 --bootproto=static --ip={{ host_fact_ip }} --netmask={{ hostvars[groups['esxi'][my_idx]].host_fact_netmask }} --gateway={{ hostvars[groups['esxi'][my_idx]].host_fact_gateway }} --nameserver={{ hostvars[groups['esxi'][my_idx]].host_fact_nameserver }}
+
+# Reboot
+reboot
+
+# Use busybox interpreter
+%firstboot --interpreter=busybox
+
+# Put host in maintenance mode
+esxcli system maintenanceMode set -e true
+
+# Set DNS Suffix
+esxcli network ip dns search add --domain={{ hostvars[groups['esxi'][my_idx]].host_fact_domain }}
+
+# Enable NTP
+esxcli system ntp set -s={{ hostvars[groups['esxi'][my_idx]].host_fact_ntp }}
+esxcli system ntp set -e=yes
+
+## Create vSwitches
+#esxcli network vswitch standard add -v vSwitch1
+#
+## Set vSwitch MTU's
+##esxcli network vswitch standard set -v vSwitch1 -m 9000
+#
+
+
+## Create vSwitches
+#esxcli network vswitch standard add -v vSwitch1
+#
+## Set vSwitch MTU's
+##esxcli network vswitch standard set -v vSwitch1 -m 9000
+#
+## Add Additional NIC to vSwitches
+#esxcli network vswitch standard uplink add --uplink-name=vmnic0 --vswitch-name=vSwitch0
+#esxcli network vswitch standard uplink add --uplink-name=vmnic2 --vswitch-name=vSwitch0
+#esxcli network vswitch standard uplink add --uplink-name=vmnic1 --vswitch-name=vSwitch1
+#esxcli network vswitch standard uplink add --uplink-name=vmnic3 --vswitch-name=vSwitch1
+#
+## Create VMKernel Ports
+esxcli network vswitch standard portgroup add --portgroup-name=vMotion --vswitch-name=vSwitch0
+#esxcli network vswitch standard portgroup add --portgroup-name=vMotion --vswitch-name=vSwitch1
+#esxcli network vswitch standard portgroup add --portgroup-name=vSAN --vswitch-name=vSwitch1
+esxcli network ip netstack add --netstack=vmotion
+esxcli network ip interface add --interface-name=vmk2 --portgroup-name=vMotion --netstack=vmotion
+##esxcli network ip interface add --interface-name=vmk2 --portgroup-name=vMotion --netstack=vmotion --mtu=9000
+#esxcli network ip interface add --interface-name=vmk3 --portgroup-name=vSAN 
+##esxcli network ip interface add --interface-name=vmk3 --portgroup-name=vSAN --mtu=9000
+esxcli network ip interface ipv4 set --interface-name=vmk2 --ipv4=192.168.{{ vcenter.vc_fact_ip.split('.')[3] }}.{{ hostvars[host_fact_hostname].ansible_host_ip.split('.')[3] }} --netmask=255.255.255.0 --type=static
+#esxcli network ip interface tag add --interface-name=vmk3 --tagname=VSAN
+#
+#
+## Set active vmnic on vswitch
+#esxcli network vswitch standard policy failover set --active-uplinks=vmnic2 --vswitch-name=vSwitch0
+#esxcli network vswitch standard policy failover set --active-uplinks=vmnic3 --vswitch-name=vSwitch1
+#
+## Add and remove port groups
+#esxcli network vswitch standard portgroup add --portgroup-name={{ hostvars[groups['esxi'][my_idx]].host_fact_deployment_network }} --vswitch-name=vSwitch0
+#esxcli network vswitch standard portgroup remove --portgroup-name="VM Network" --vswitch-name=vSwitch0
+
+
+
+
+# enable & start SSH
+vim-cmd hostsvc/enable_ssh
+vim-cmd hostsvc/start_ssh
+
+# enable & start ESXi Shell
+vim-cmd hostsvc/enable_esx_shell
+vim-cmd hostsvc/start_esx_shell
+
+#esxcli network ip set --ipv6-enabled=false
+
+esxcli system settings advanced set -o /UserVars/SuppressShellWarning -i 1
+
+# Reboot to apply settings (disabling IPv6)
+esxcli system shutdown reboot -d 60 -r "rebooting after making changes"
+
+

@@ -1,0 +1,68 @@
+---
+
+# local
+# pip3 install git+https://github.com/rthalley/dnspython.git
+# pip3 install pyvmomi
+# pip3 install pyvim
+# pip3 install requests
+# pip3 install omsdk
+
+# remote
+# sudo dnf install libnsl
+# sudo dnf install genisoimage
+# sudo dnf install python-pyvmomi
+
+
+- name: Add repository - Microsoft
+  ansible.builtin.yum_repository:
+    name: microsoft
+    description: Microsoft Repository
+    baseurl: https://packages.microsoft.com/rhel/8/prod/
+    gpgkey: https://packages.microsoft.com/keys/microsoft.asc
+    gpgcheck: true
+    enabled: true
+
+- name: Install the needed pacakages
+  ansible.builtin.package:
+    name:
+      - libnsl
+      - genisoimage
+      - python3-pip
+      - git
+      - gcc
+      - powershell
+#      - python3-pyvmomi
+    state: latest
+  become: true
+
+
+- name: Get the os_family fact
+  gather_facts:
+- name: Print the os_family fact
+  debug:
+    var: ansible_facts['os_family']
+
+
+- name: Upgrade all packages
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+  become: true
+  when: ansible_facts['os_family'] == "RedHat"
+#  when: ansible_facts["os_name"] == "RedHat"
+
+- name: Install needed python packages
+  ansible.builtin.pip:
+    name:
+#      - git+https://github.com/rthalley/dnspython.git
+      - dnspython
+      - pyvmomi
+      - pyvim
+      - requests
+      - omsdk
+      - jmespath
+
+- name: Install govc
+  shell: 'curl -L -o - "https://github.com/vmware/govmomi/releases/latest/download/govc_$(uname -s)_$(uname -m).tar.gz" | tar -C /usr/local/bin -xvzf - govc'
+
+

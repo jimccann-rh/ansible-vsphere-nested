@@ -1,0 +1,385 @@
+---
+
+
+
+- hosts: localhost
+  become: false
+  gather_facts: false
+
+  tasks:
+
+    - name: Add host to group idrac
+      ansible.builtin.add_host:
+        name: 'ipmi.{{ item }}'
+        groups: idrac
+      loop: '{{ target_hosts | list }}'
+
+    - name: Add host to group esxi
+      ansible.builtin.add_host:
+        name: '{{ item }}'
+        groups: esxi
+        DC: "1"
+      loop: '{{ target_hosts | list }}'
+
+  tags:
+    - always
+
+- name: Nested 
+  hosts: localhost
+  gather_facts: true
+  collections:
+    - community.general
+
+  tags:
+    - packlocal
+    - never
+  
+  tasks:
+
+    - name: Needed packages on system
+      include_tasks: packlocal.yml
+
+- name: Prep config files
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    templocation: "{{ ansible_env.HOME }}/build"
+    mountpath: '/data/export/share'
+    #esxiiso: 'VMware-VMvisor-Installer-8.0U2-22380479.x86_64.iso'
+    #esxiiso: 'VMware-VMvisor-Installer-8.0U1-21495797.x86_64.iso'
+    #esxiiso: 'VMware-VMvisor-Installer-7.0U3l-21424296.x86_64.iso'
+    #vcenteriso: 'VMware-VCSA-all-7.0.3-21477706.iso'
+    #vcenteriso: 'VMware-VCSA-all-8.0.1-21560480.iso'
+    #vcenteriso: 'VMware-VCSA-all-8.0.2-22617221.iso'
+    govc_url: "https://root:{{ hostvars[inventory_hostname].ansible_password }}@{{ hostvars[inventory_hostname].ansible_host }}"
+    version: "7"
+    deletevms: false
+    forcedelete: false
+
+  collections:
+    - community.general
+    - community.vmware
+
+  module_defaults:
+    group/vmware:
+      hostname: "{{ lookup('ansible.builtin.env', 'MAINVCHOSTNAME') }}"
+      username: "{{ lookup('ansible.builtin.env', 'MAINVCUSERNAME') }}"
+      password: "{{ lookup('ansible.builtin.env', 'VCPASSWORD') }}"
+      validate_certs: false
+ 
+  tags:
+    - iso
+  
+  tasks:
+
+    - block:
+       - name: Include vars of vcenter_host-7.yml
+         ansible.builtin.include_vars:
+           file: vcenter_host-7.yml
+
+       - name: copying to local
+         copy:
+          src: vcenter7_host.yml
+          dest:  vcenter_host.yml
+         delegate_to: localhost
+
+      when: '"7" in version'
+
+    - block:
+       - name: Include vars of vcenter_host-8.yml
+         ansible.builtin.include_vars:
+           file: vcenter_host-8.yml
+
+       - name: copying to local
+         copy:
+          src: vcenter8_host.yml
+          dest:  vcenter_host.yml
+         delegate_to: localhost
+
+      when: '"8" in version'
+
+
+
+- hosts: esxinfstomount
+  name: ESXi add nfs mount
+  gather_facts: False
+  vars:
+    nfsetuponphysical: false
+
+  tags:
+    - nfsetuponphysical
+    - never
+
+  collections:
+    - community.general
+    - community.vmware
+
+  tasks:
+
+    - block:
+       - name: Add nfs mount to host
+         include_tasks: mountnfshosts.yml
+
+
+
+- name: create iso and install
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    templocation: "{{ ansible_env.HOME }}/build"
+    mountpath: '/data/export/share'
+    govc_url: "https://root:{{ hostvars[inventory_hostname].ansible_password }}@{{ hostvars[inventory_hostname].ansible_host }}"
+    version: "7"
+    deletevms: false
+    forcedelete: false
+    esximemory: "131072"
+    esxicpu: "20"
+
+  collections:
+    - community.general
+    - community.vmware
+
+  module_defaults:
+    group/vmware:
+      hostname: "{{ lookup('ansible.builtin.env', 'MAINVCHOSTNAME') }}"
+      username: "{{ lookup('ansible.builtin.env', 'MAINVCUSERNAME') }}"
+      password: "{{ lookup('ansible.builtin.env', 'VCPASSWORD') }}"
+      validate_certs: false
+
+  tasks:
+
+    - block:
+       - name: Needed packages on remote system hosting isos
+         include_tasks: packisoweb.yml
+      tags:
+        - rpack
+        - never
+
+    - block:
+       - name: Create custom media and mount media
+         include_tasks: isoweb.yml
+         loop: "{{ groups['idrac'] | list }}"
+         loop_control:
+           loop_var: loop_bms
+           index_var: my_idx
+      tags:
+        - isomount
+
+    - block:
+       - name: Create custom media and mount media
+         include_tasks: isonested.yml
+         loop: "{{ groups['idrac'] | list }}"
+         loop_control:
+           loop_var: loop_bms
+           index_var: my_idx
+      tags:
+        - isonested
+
+    - block:
+       - name: "remove VM ESXi/vCenter"
+         include_tasks: remove-isonested.yml
+         loop: "{{ groups['idrac'] | list }}"
+         loop_control:
+           loop_var: loop_bms
+           index_var: my_idx
+      tags:
+        - removeisonested
+        - never
+      when: deletevms | bool
+
+
+- hosts: localhost
+#- hosts: esxi
+  name: ESXi booted
+  gather_facts: False
+#  vars:
+#    govc_url: "https://root:{{ hostvars[inventory_hostname].ansible_password }}@{{ hostvars[inventory_hostname].ansible_host }}"
+  tags:
+    - esxiboot
+
+  tasks:
+
+    - name: ESXi booted
+      include_tasks: esxiboot.yml
+      loop: "{{ groups['esxi'] | list }}"
+      loop_control:
+        loop_var: loop_bms
+        index_var: my_idx
+
+- name: vCenter mount installer iso
+  #hosts: isoweb
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    templocation: "{{ ansible_env.HOME }}/build"
+    mountpath: '/data/export/share'
+    version: "7"
+
+  collections:
+    - community.general
+
+  tags:
+    - vcenteriso
+
+  tasks:
+
+    - block:
+       - name: Include vars of vcenter_host-7.yml
+         ansible.builtin.include_vars:
+           file: vcenter_host-7.yml
+
+       - name: copying to local
+         copy:
+          src: vcenter7_host.yml
+          dest:  vcenter_host.yml
+         delegate_to: localhost
+
+      when: '"7" in version'
+
+    - block:
+       - name: Include vars of vcenter_host-8.yml
+         ansible.builtin.include_vars:
+           file: vcenter_host-8.yml
+
+       - name: copying to local
+         copy:
+          src: vcenter8_host.yml
+          dest:  vcenter_host.yml
+         delegate_to: localhost
+
+      when: '"8" in version'
+
+
+    - name: Setup vCenter server
+      include_tasks: vcenter_preq.yml
+
+- name: nested vCenter install on vCenter 
+  #hosts: isoweb
+  hosts: localhost
+  connection: local
+
+  gather_facts: true
+  vars:
+    templocation: "{{ ansible_env.HOME }}/build"
+    bootstrap: false
+
+  collections:
+    - community.general
+
+  tags:
+    - vcentersetup
+
+  tasks:
+
+    - name: Setup nested vCenter server on vCenter
+      include_tasks: nested_vcenter.yml
+
+
+- hosts: localhost
+#- hosts: esxi
+#- hosts: esxi[1:] 
+  name: ESXi add vcenter
+  gather_facts: False
+  serial: 1
+  vars:
+    bootstrap: true
+    nfsetup: true
+    nfsiso: false
+    localcy: false
+
+  tags:
+    - hostvcenter
+
+  collections:
+    - community.general
+    - community.vmware
+
+  tasks:
+
+    - block:
+       - name: Add host to vcenter
+         include_tasks: addhosts_vcenter.yml
+         loop: "{{ groups['esxi'] | list }}"
+         loop_control:
+           loop_var: loop_bms
+           index_var: my_idx
+
+
+       - name: Add dvs to vcenter
+         include_tasks: dvs_hosts_vcenter.yml
+         #when: '"1" in DC | string'
+         loop: "{{ groups['esxi'] | list }}"
+         loop_control:
+           loop_var: loop_bms
+           index_var: my_idx
+
+
+
+      tags:
+       - vcenterhost
+
+- hosts: idrac
+  name: remove custom iso
+  gather_facts: False
+  tags:
+    - removeiso
+  vars:
+    #host_url: 10.185.92.14 
+    templocation: "{{ ansible_env.HOME }}/build"
+    mountpath: '/data/export/share'
+
+  collections:
+    - community.general
+  tasks:
+
+    - name: Remove built custom iso
+      ansible.builtin.file:
+        path: "{{ mountpath }}/{{ inventory_hostname }}.iso"
+        state: absent
+      #delegate_to: "{{ groups['web'][0] }}"
+      delegate_to: localhost
+
+
+
+
+
+- name: move vcenter to folder
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars:
+    templocation: "{{ ansible_env.HOME }}/build"
+    mountpath: '/data/export/share'
+    govc_url: "https://root:{{ hostvars[inventory_hostname].ansible_password }}@{{ hostvars[inventory_hostname].ansible_host }}"
+    version: "7"
+    deletevms: false
+    forcedelete: false
+
+  collections:
+    - community.general
+    - community.vmware
+
+  module_defaults:
+    group/vmware:
+      hostname: "{{ lookup('ansible.builtin.env', 'MAINVCHOSTNAME') }}"
+      username: "{{ lookup('ansible.builtin.env', 'MAINVCUSERNAME') }}"
+      password: "{{ lookup('ansible.builtin.env', 'VCPASSWORD') }}"
+      validate_certs: false
+
+  tasks:
+
+    - name: Include vars of vcenter_host.yml
+      ansible.builtin.include_vars:
+        file: vcenter_host.yml
+        name: vcenter
+
+    - name: Move Virtual Machine
+      community.vmware.vmware_guest_move:
+        datacenter: '{{ vcenter.vc_datacenter }}'
+        name: '{{ vcenter.vc_fact_hostname }}.{{ vcenter.vc_fact_domain }}'
+        dest_folder: "/{{ vcenter.vc_datacenter }}/vm/{{ vcenter.vc_folder }}"
+
+

@@ -1,0 +1,134 @@
+---
+
+- name: Include vars of vcenter_host.yml
+  ansible.builtin.include_vars:
+    file: vcenter_host.yml
+    name: vcenter
+
+
+#- debug:
+#    msg: "********************** {{ vcenter.vc_fact_ip.split('.')[3] }} well be used for vmotion network {{ vcenter.vc_fact_ip }}"
+
+
+- name: Set esxi name
+  ansible.builtin.set_fact:
+    host_fact_hostname: "{{ hostvars[groups['esxi'][my_idx]].inventory_hostname }}"
+
+
+#- name: Setting host facts
+#  ansible.builtin.set_fact: 
+#    host_fact_ip: "{{ hostvars[groups['esxi'][my_idx]].ansible_host_ip }}"
+#    #host_fact_ip: "{{ lookup('community.general.dig', '{{ host_fact_hostname }}')}}"
+
+#- name: Debug
+#  ansible.builtin.debug:
+#    msg: '{{ item }}'
+#  loop:
+#    - "{{ host_fact_ip }} esxi"
+
+
+- name: ESXi build iso
+  block:
+
+#    - name: "Is {{ host_fact_hostname }} install of ESXi on VM already done"
+#      ansible.builtin.wait_for:
+#        host: "{{ hostvars[groups['esxi'][my_idx]].NESTEDVMIP }}"
+#        port: 443
+#        sleep: 10
+#        timeout: 30
+
+     - name: "Does ESXi virtual machine {{ host_fact_hostname }} exist"
+       community.vmware.vmware_guest:
+         datacenter: "{{ vcenter.vc_datacenter }}"
+         folder: "{{ vcenter.vc_datacenter }}/vm/{{ vcenter.vc_folder }}"
+         name: "{{ host_fact_hostname }}"
+         state: present
+
+
+  rescue:
+
+    - name: Get stats of a dir
+      ansible.builtin.stat:
+        path: /tmp/custom-esxi
+      register: sodce
+    
+    - name: Create a directory if it does not exist for temp mount point for iso
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: directory
+        mode: '0755'
+      loop:
+        - /tmp/custom-esxi
+      when: not sodce.stat.exists
+    
+    - name: Mount iso to temp directory
+      ansible.posix.mount:
+        path: '{{ item.dst }}'
+        src: '{{ item.src }}'
+        fstype: iso9660
+        opts: ro
+        state: ephemeral
+      loop:
+        - { src: '{{ mountpath }}/{{ esxiiso }}', dst: '/tmp/custom-esxi' }
+      become: true
+    
+    - name: Create a directory if it does not exist to build custom iso
+      ansible.builtin.file:
+        path: "{{ templocation }}/{{ loop_bms }}"
+        #path: "{{ templocation }}/{{host_fact_hostname}}"
+        state: directory
+        mode: '0755'
+    
+    - name: Copy temp mounted iso to directory for customizing
+      ansible.builtin.copy:
+        src: /tmp/custom-esxi/
+        dest: "{{ templocation }}/{{ loop_bms }}"
+        #dest: "{{ templocation }}/{{host_fact_hostname}}"
+        remote_src: yes
+      become: true
+    
+    - name: Template files
+      ansible.builtin.template:
+        src: '{{ item.src }}'
+        dest: '{{ item.dst }}'
+      loop:
+        - { src: 'nested.ks.j2', dst: '{{ templocation }}/{{ loop_bms }}/ks.cfg' }
+          #- { src: 'ks.j2', dst: '{{ templocation }}/{{ loop_bms }}/ks.cfg' }
+          #- { src: 'ks.j2', dst: '{{ templocation }}/{{host_fact_hostname}}/ks.cfg' }
+    
+    - name: Edit boot.cfg in temp mounted directory
+      ansible.builtin.lineinfile:
+        path: "{{ item }}" 
+        regexp: '^kernelopt=runweasel'
+        line: "kernelopt=runweasel ks=cdrom:/KS.CFG"
+      become: true
+      loop:
+        - "{{ templocation }}/{{ loop_bms }}/efi/boot/boot.cfg"
+          #- "{{ templocation }}/{{host_fact_hostname}}/efi/boot/boot.cfg"
+        - "{{ templocation }}/{{ loop_bms }}/boot.cfg"
+          #- "{{ templocation }}/{{host_fact_hostname}}/boot.cfg"
+    
+    - name: Run command genisoimage to create custom esxi iso to boot from
+      ansible.builtin.command: 'genisoimage -relaxed-filenames -J -R -o {{ mountpath }}/{{ loop_bms }}.iso -b isolinux.bin -c boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table -eltorito-alt-boot -e efiboot.img -no-emul-boot {{ templocation }}/{{ loop_bms }}'
+      #ansible.builtin.command: 'genisoimage -relaxed-filenames -J -R -o /iso/{{host_fact_hostname}}.iso -b isolinux.bin -c boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table -eltorito-alt-boot -e efiboot.img -no-emul-boot {{ templocation }}/{{host_fact_hostname}}'
+      become: true
+    
+    - name: Change file permissions
+      ansible.builtin.file:
+        path: '{{ mountpath }}/{{ loop_bms }}.iso'
+        mode: '0666'
+      become: true
+    
+    - name: UN mount iso
+      ansible.posix.mount:
+        path: '{{ item }}'
+        state: unmounted
+      loop:
+        - /tmp/custom-esxi
+      become: true
+    
+    - name: Remove a directory that built custom iso
+      ansible.builtin.file:
+        path: "{{ templocation }}/{{ loop_bms }}"
+        state: absent
+      become: true

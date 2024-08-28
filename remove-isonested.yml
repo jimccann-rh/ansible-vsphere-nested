@@ -1,0 +1,118 @@
+---
+
+- name: Include vars of vcenter_host.yml
+  ansible.builtin.include_vars:
+    file: vcenter_host.yml
+    name: vcenter
+
+#- debug:
+#    msg: "********************** {{ vcenter.vc_fact_ip.split('.')[3] }} well be used for vmotion network {{ vcenter.vc_fact_ip }}"
+
+
+- name: Set esxi name
+  ansible.builtin.set_fact:
+    host_fact_hostname: "{{ hostvars[groups['esxi'][my_idx]].inventory_hostname }}"
+
+- name: Setting host facts 
+  ansible.builtin.set_fact: 
+#    host_fact_ip: "{{ hostvars[groups['esxi'][my_idx]].ansible_host_ip }}"
+    host_fact_name: "{{ hostvars[groups['esxi'][my_idx]].inventory_hostname }}"
+    ipmi_fact_name: "{{ hostvars[groups['idrac'][my_idx]].inventory_hostname }}"
+    #host_fact_ip: "{{ lookup('community.general.dig', '{{ host_fact_hostname }}')}}"
+
+#- name: Debug
+#  ansible.builtin.debug:
+#    msg: '{{ item }}'
+#  loop:
+#    - "{{ host_fact_ip }} esxi"
+
+
+- name: ESXi Exists (we don't want it online)
+  block:
+    - name: "Does ESXi virtual machine {{ host_fact_hostname }} exist"
+      community.vmware.vmware_guest_info:
+        datacenter: "{{ vcenter.vc_datacenter }}"
+        name: "{{ host_fact_hostname }}"
+        schema: vsphere
+        properties:
+          - guest.ipAddress
+      register: nested_vm
+
+    - name: "Wait for {{ host_fact_name }} to be down"
+      ansible.builtin.wait_for:
+        host: "{{ nested_vm.instance.guest.ipAddress }}"
+        port: 443
+        sleep: 10
+        timeout: 30
+      register: result
+      failed_when: result.state == "started"
+
+
+    - debug:
+        msg: "{{ result }}"
+    
+  rescue:
+
+    - name: clean up
+      block:
+        - name: "DELETE virtual machine {{ host_fact_name }}"
+          community.vmware.vmware_guest:
+            datacenter: "{{ vcenter.vc_datacenter }}" 
+#            folder: "{{ vcenter.vc_datacenter }}/vm/{{ vcenter.vc_folder }}"
+            name: "{{ host_fact_name }}"
+            state: absent
+#          delegate_to: localhost
+
+      rescue:   
+
+        - name: "FORCE DELETE virtual machine {{ host_fact_name }}"
+          community.vmware.vmware_guest:
+            datacenter: "{{ vcenter.vc_datacenter }}" 
+#            folder: "{{ vcenter.vc_datacenter }}/vm/{{ vcenter.vc_folder }}"
+            name: "{{ host_fact_name }}"
+            state: absent
+            force: true
+          delegate_to: localhost
+          when: forcedelete | bool
+
+
+- name: vCenter Exists (we don't want it online)
+  block:
+
+    - name: "Wait for {{ vcenter.vc_fact_hostname }} to be down"
+      ansible.builtin.wait_for:
+        host: "{{ vcenter.vc_fact_ip }}"
+        port: 443
+        sleep: 10
+        timeout: 30
+#      delegate_to: "{{ groups['web'][0] }}"
+      register: result
+      failed_when: result.rc == 0
+
+  rescue:
+
+    - name: clean up
+      block:
+        - name: "DELETE virtual machine {{ vcenter.vc_fact_hostname }}.{{ vcenter.vc_fact_domain }}"
+          community.vmware.vmware_guest:
+            datacenter: "{{ vcenter.vc_datacenter }}"
+#            folder: "{{ vcenter.vc_datacenter }}/vm/{{ vcenter.vc_folder }}"
+            name: "{{ vcenter.vc_fact_hostname }}.{{ vcenter.vc_fact_domain }}"
+            state: absent
+#          delegate_to: localhost
+
+      rescue: 
+
+        - name: "FORCE DELETE virtual machine {{ vcenter.vc_fact_hostname }}.{{ vcenter.vc_fact_domain }}"
+          community.vmware.vmware_guest:
+            datacenter: "{{ vcenter.vc_datacenter }}"
+#            folder: "{{ vcenter.vc_datacenter }}/vm/{{ vcenter.vc_folder }}"
+            name: "{{ vcenter.vc_fact_hostname }}.{{ vcenter.vc_fact_domain }}"
+            state: absent
+            force: true
+#          delegate_to: localhost
+          when: forcedelete | bool
+
+
+  run_once: true
+ 

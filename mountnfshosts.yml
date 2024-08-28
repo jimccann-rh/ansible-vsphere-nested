@@ -1,0 +1,53 @@
+---
+
+- name: Include vars of vcenter_host.yml
+  ansible.builtin.include_vars:
+    file: vcenter_host.yml
+    name: vcenter
+
+- debug:
+    msg:
+     - "{{ play_hosts.index(inventory_hostname) }}"
+     - "{{ ansible_play_hosts.index(inventory_hostname) }}"
+#     - "{{ hostvars[inventory_hostname].ansible_host }}"
+
+- block:
+    - name: Include vars nfs
+      ansible.builtin.include_vars:
+        file: nfshostip.yml
+
+    - name: Mount NFS datastores to ESXi physical
+      community.vmware.vmware_host_datastore:
+        esxi_hostname: "{{ inventory_hostname }}"
+        datastore_name: '{{ item.name }}'
+        datastore_type: '{{ item.type }}'
+        nfs_server: '{{ item.server }}'
+        nfs_path: '{{ item.path }}'
+        nfs_ro: '{{ item.nfs_ro }}'
+        state: present
+        validate_certs: false
+      loop:
+          - { 'name': '{{ nfsname }}', 'server': '{{ nfserver }}', 'path': '{{ sharepoint }}', 'type': 'nfs41', 'nfs_ro': 'false'}
+#          - { 'name': '{{ nfsname2 }}', 'server': '{{ nfserver2 }}', 'path': '{{ sharepoint2 }}', 'type': 'nfs', 'nfs_ro': 'false'}
+      when: nfsetuponphysical | bool   
+
+    - name: "Create a VM folder on {{ vcenter.vc_hostname }} in {{ vcenter.vc_datacenter }} datacenter"
+      community.vmware.vcenter_folder:
+        datacenter_name: '{{ vcenter.vc_datacenter }}'
+        folder_name: '{{ vcenter.vc_folder }}'
+        folder_type: vm
+        state: present
+      register: vm_folder_creation_result
+
+
+#  ignore_errors: true
+  delegate_to: localhost
+  module_defaults:
+    group/vmware:
+      hostname: '{{ vcenter.vc_hostname }}'
+      username: '{{ vcenter.vc_username }}'
+      password: "{{ vcenter.vc_password }}"
+      validate_certs: false
+
+
+

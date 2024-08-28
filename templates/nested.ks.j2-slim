@@ -1,0 +1,43 @@
+# Accept the VMware End User License Agreement
+vmaccepteula
+
+# Set the root password for DCUI
+rootpw {{ hostvars[groups['esxi'][my_idx]].ansible_password }}
+
+# Install on the first local disk available on machine
+#install --firstdisk --overwritevmfs --overwritevsan
+install --firstdisk --overwritevmfs
+
+
+# Reboot
+reboot
+
+# Use busybox interpreter
+%firstboot --interpreter=busybox
+
+# Put host in maintenance mode
+esxcli system maintenanceMode set -e true
+
+# Set DNS Suffix
+esxcli network ip dns search add --domain={{ hostvars[groups['esxi'][my_idx]].host_fact_domain }}
+
+# Enable NTP
+esxcli system ntp set -s={{ hostvars[groups['esxi'][my_idx]].host_fact_ntp }}
+esxcli system ntp set -e=yes
+
+# enable & start SSH
+vim-cmd hostsvc/enable_ssh
+vim-cmd hostsvc/start_ssh
+
+# enable & start ESXi Shell
+vim-cmd hostsvc/enable_esx_shell
+vim-cmd hostsvc/start_esx_shell
+
+esxcli network ip set --ipv6-enabled=false
+
+esxcli system settings advanced set -o /UserVars/SuppressShellWarning -i 1
+
+# Reboot to apply settings (disabling IPv6)
+esxcli system shutdown reboot -d 60 -r "rebooting after making changes"
+
+

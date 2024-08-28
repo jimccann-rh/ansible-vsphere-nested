@@ -1,0 +1,7 @@
+host_fact_domain: "vsphere.local"
+host_fact_nameserver: 10.93.60.129
+host_fact_gateway: 10.93.60.129
+host_fact_netmask: 255.255.255.128
+#host_fact_ntp: "time.service.networklayer.com"
+host_fact_ntp: 10.0.77.54
+#host_fact_deployment_network: "ci-vlan-981-testing"

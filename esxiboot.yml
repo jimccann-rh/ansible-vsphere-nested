@@ -1,0 +1,22 @@
+---
+
+#- name: "Wait for {{ inventory_hostname }} install of ESXi on host to be complete"
+##- name: "Wait for {{ inventory_hostname }} {{ hostvars[inventory_hostname].ansible_host_ip }} install of ESXi on host to be complete"
+#  ansible.builtin.wait_for:
+#    host: "{{ hostvars[inventory_hostname].ansible_host_ip }}"
+#    port: 443
+#    delay: 120
+#    sleep: 10
+#    timeout: 900
+#  delegate_to: localhost
+
+
+
+- name: "*** Wait for {{ hostvars[groups['esxi'][my_idx]].inventory_hostname }} {{ hostvars[groups['esxi'][my_idx]].NESTEDVMIP }} install of ESXi on host to be complete"
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[groups['esxi'][my_idx]].NESTEDVMIP }}"
+    port: 443
+#    delay: 180
+    sleep: 10
+    timeout: 900
+

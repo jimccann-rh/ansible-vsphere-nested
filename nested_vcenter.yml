@@ -1,0 +1,73 @@
+---
+
+- name: Include vars of vcenter_host.yml
+  ansible.builtin.include_vars:
+    file: vcenter_host.yml
+    name: vcenter
+
+#- debug: 
+#    var: vars
+
+
+- name: vCenter Exists
+  block:
+
+#    - name: "{{ vcenter.vc_fact_hostname }}.{{ vcenter.vc_fact_domain }} vCenter is up?"
+#      ansible.builtin.command: 'timeout 30 bash -c "</dev/tcp/{{ vcenter.vc_fact_ip }}/22"'
+#      register: vcenterup
+#      failed_when: vcenterup.rc > 0
+
+    - name: "Wait for {{ vcenter.vc_fact_hostname }}.{{ vcenter.vc_fact_domain }} vCenter is up?"
+      ansible.builtin.wait_for:
+        host: "{{ vcenter.vc_fact_ip }}"
+        port: 22
+#        delay: 180
+        sleep: 10
+        timeout: 30
+#      delegate_to: "{{ groups['web'][0] }}"
+
+
+
+
+  rescue:
+
+    - name: Template files
+      ansible.builtin.template:
+        src: '{{ item.src }}'
+        dest: '{{ item.dst }}'
+      loop:
+        - { src: 'nested_embedded_vCSA_on_VC.j2', dst: '{{ templocation }}/embedded_vCSA_on_VC.json' }
+
+    - name: "Run a command to install {{ vcenter.vc_fact_hostname }}.{{ vcenter.vc_fact_domain }} onto vCenter"
+      ansible.builtin.command: '/tmp/custom-vcenter/vcsa-cli-installer/lin64/vcsa-deploy install --no-ssl-certificate-verification --accept-eula {{ templocation }}/embedded_vCSA_on_VC.json'
+      register: vcenter_install
+      async: 7200
+      poll: 0
+#      failed_when:
+#        - vcenter_install.rc != 0
+#        - '"Error message: The provided IP vcenter.vc_fact_ip is already in use" not in vcenter_install.stderr'
+
+
+    - name: Check on an async task
+      async_status:
+        jid: "{{ vcenter_install.ansible_job_id }}"
+      register: job_result
+      until: job_result.finished
+      retries: 7200
+      delay: 300 
+
+
+
+    - debug:
+        msg:
+          - '{{ vcenter_install }}'
+
+
+    - name: UN mount iso
+      ansible.posix.mount:
+        path: '{{ item }}'
+        state: unmounted
+      loop:
+        - /tmp/custom-vcenter
+      become: true
+

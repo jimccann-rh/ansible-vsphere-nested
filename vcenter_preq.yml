@@ -1,0 +1,76 @@
+---
+
+- name: Include vars of vcenter_host.yml
+  ansible.builtin.include_vars:
+    file: vcenter_host.yml
+    name: vcenter
+
+
+#- name: "Simple A record (IPV4 address) lookup"
+#  ansible.builtin.debug:
+#    msg: '{{ item }}' 
+#  loop:
+#    - "{{ lookup('community.general.dig', '{{ vcenter.vc_fact_hostname }}.{{ vcenter.vc_fact_domain }}')}}"
+#    - '{{ ansible_env.HOME }}'
+#    - '{{ templocation }}'
+#    - "{{ hostvars[groups['esxi'][0]].inventory_hostname }}"
+
+#- name: Setting host facts using key=value pairs, this format can only create strings or booleans
+#  ansible.builtin.set_fact: 
+#    vcenter_fact_ip: "{{ lookup('community.general.dig', '{{ vcenter.vc_fact_hostname }}.{{ vcenter.vc_fact_domain }}')}}"
+
+- name: "Simple A record (IPV4 address) lookup"
+  ansible.builtin.debug:
+    msg: '{{ item }}'
+  loop:
+    - "{{ vcenter.vc_fact_ip }} vcenter"
+
+- name: UN mount iso if mounted
+  ansible.posix.mount:
+    path: '{{ item }}'
+    state: unmounted
+  loop:
+    - /tmp/custom-vcenter
+  become: true
+
+
+- name: vCenter Exists
+  block:
+    - name: "Wait for {{ vcenter.vc_fact_hostname }}.{{ vcenter.vc_fact_domain }} vCenter is up?"
+      ansible.builtin.wait_for:
+        host: "{{ vcenter.vc_fact_ip }}"
+        port: 22
+#        delay: 180
+        sleep: 10
+        timeout: 30
+#      delegate_to: "{{ groups['web'][0] }}"
+
+  rescue:
+
+    - name: Create a directory if it does not exist for temp mount point for iso
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: directory
+        mode: '0755'
+      loop:
+        - /tmp/custom-vcenter
+    
+    - name: Mount iso to temp directory
+      ansible.posix.mount:
+        path: '{{ item.dst }}'
+        src: '{{ item.src }}'
+        fstype: iso9660
+        opts: ro
+        state: ephemeral
+      loop:
+        - { src: '{{ mountpath }}/{{ vcenteriso }}', dst: '/tmp/custom-vcenter' }
+      become: true
+    
+    - name: Create a directory if it does not exist to build custom iso
+      ansible.builtin.file:
+        path: "{{ templocation }}"
+        state: directory
+        mode: '0755'
+    
+    
+    

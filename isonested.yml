@@ -1,0 +1,173 @@
+---
+
+- name: Include vars of vcenter_host.yml
+  ansible.builtin.include_vars:
+    file: vcenter_host.yml
+    name: vcenter
+
+#- debug:
+#    msg: "********************** {{ vcenter.vc_fact_ip.split('.')[3] }} well be used for vmotion network {{ vcenter.vc_fact_ip }}"
+
+
+- name: Set esxi name
+  ansible.builtin.set_fact:
+    host_fact_hostname: "{{ hostvars[groups['esxi'][my_idx]].inventory_hostname }}"
+
+- name: Setting host facts 
+  ansible.builtin.set_fact: 
+#    host_fact_ip: "{{ hostvars[groups['esxi'][my_idx]].ansible_host_ip }}"
+    host_fact_name: "{{ hostvars[groups['esxi'][my_idx]].inventory_hostname }}"
+    ipmi_fact_name: "{{ hostvars[groups['idrac'][my_idx]].inventory_hostname }}"
+    #host_fact_ip: "{{ lookup('community.general.dig', '{{ host_fact_hostname }}')}}"
+
+- name: Setting host facts
+  ansible.builtin.set_fact:
+    vmkguest: "vmkernel8Guest"
+  when: '"8" in version'
+
+- name: Setting host facts
+  ansible.builtin.set_fact:
+    vmkguest: "vmkernel7Guest"
+  when: '"7" in version'
+
+
+#- name: Debug
+#  ansible.builtin.debug:
+#    msg: '{{ item }}'
+#  loop:
+#    - "{{ host_fact_ip }} esxi"
+
+- name: ESXi Exists
+  block:
+
+#    - name: "Wait for {{ inventory_hostname }} install of ESXi on VM to be complete"
+#      ansible.builtin.wait_for:
+#        host: "{{ host_fact_ip }}"
+#        port: 443
+#        sleep: 10
+#        timeout: 30
+
+
+    - name: "Does ESXi virtual machine {{ host_fact_hostname }} exist"
+      community.vmware.vmware_guest:
+        datacenter: "{{ vcenter.vc_datacenter }}"
+        folder: "{{ vcenter.vc_datacenter }}/vm/{{ vcenter.vc_folder }}"
+        name: "{{ host_fact_hostname }}"
+        state: present
+
+    - name: "Does ESXi virtual machine {{ host_fact_hostname }} exist"
+      community.vmware.vmware_guest_info:
+        datacenter: "{{ vcenter.vc_datacenter }}"
+        name: "{{ host_fact_hostname }}"
+        schema: vsphere
+        properties:
+          - guest.ipAddress
+      register: nested_vm
+
+#    - debug:
+#        msg: 
+#          - "{{ nested_vm }}"
+#          - "{{ nested_vm.instance.guest }}"
+#          - "{{ nested_vm.instance.guest.ipAddress }}"
+
+
+    - name: Add host to group esxi
+      ansible.builtin.add_host:
+        name: '{{ host_fact_name }}'
+        groups: esxi
+        NESTEDVMIP: "{{ nested_vm.instance.guest.ipAddress }}"
+
+#{'instance': {'guest': {'ipAddress': '10.93.60.209'}}
+    
+  rescue:
+
+    - name: "Create virtual machine {{ host_fact_name }} version {{ version }}"
+      community.vmware.vmware_guest:
+        datacenter: "{{ vcenter.vc_datacenter }}" 
+        folder: "{{ vcenter.vc_datacenter }}/vm/{{ vcenter.vc_folder }}"
+        name: "{{ host_fact_name }}"
+        state: present
+        guest_id: "{{ vmkguest }}"
+        disk:
+        - size_gb: 10
+          type: thin
+          datastore: vsanDatastore
+        - size_gb: 1000
+          type: thin
+          datastore: vsanDatastore
+        hardware:
+          #memory_mb: 131072
+          memory_mb: "{{ esximemory }}"
+          #memory_mb: 65536
+          #memory_mb: 16384
+          num_cpus: "{{ esxicpu }}"
+          #num_cpus: 20
+          scsi: paravirtual
+          nested_virt: true
+        networks:
+          - name: "{{ vcenter.vc_fact_deployment_network }}"
+            device_type: vmxnet3
+          - name: "{{ vcenter.vc_fact_deployment_network2 }}"
+            device_type: vmxnet3
+        cdrom:
+          - controller_number: 0
+            controller_type: sata
+            unit_number: 0
+            state: present
+            type: iso
+            iso_path: "[isos] {{ ipmi_fact_name }}.iso"
+        wait_for_ip_address: true
+        wait_for_ip_address_timeout: 1200
+      register: nested_vm
+    
+      tags:
+        - nestedvm
+    
+    
+    - debug:
+        msg:
+          - "{{ nested_vm }}"
+          - "The VM ESXi IP address is: {{ nested_vm.instance.ipv4 }}"
+    
+    #- name: Creating a file with content
+    #  copy:
+    #    dest: "/your path"
+    #    content: |
+    #      line 01
+    #      line 02
+    
+    
+    - name: Add host to group esxi
+      ansible.builtin.add_host:
+        name: '{{ host_fact_name }}'
+        groups: esxi
+        NESTEDVMIP: "{{ nested_vm.instance.ipv4 }}"
+    #    DC: "1"
+    
+    
+    #- name: Print all available facts
+    #  ansible.builtin.debug:
+    #    var: ansible_facts
+    
+    
+        
+    - name: "Wait for {{ hostvars[groups['esxi'][my_idx]].inventory_hostname }} {{ nested_vm.instance.ipv4 }} install of ESXi on host to be complete"
+      ansible.builtin.wait_for:
+        host: "{{ nested_vm.instance.ipv4 }}"
+        port: 443
+    #    delay: 180
+        sleep: 10
+        timeout: 900
+    
+    - name: Unattach the ISO mount from the VM
+      community.vmware.vmware_guest:
+        name: "{{ host_fact_name }}"
+        cdrom:
+          - controller_number: 0
+            controller_type: sata
+            unit_number: 0
+            state: present
+            type: none
+        force: yes
+    
+    
